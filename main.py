@@ -3,6 +3,9 @@ from fastapi import FastAPI, Header, HTTPException
 from config import settings
 from telegram_models import TelegramUpdate
 import hmac
+import httpx
+from telegram_client import send_message
+from classify_intent import classify_intent
 app = FastAPI()
 
 @app.get("/health")
@@ -25,4 +28,15 @@ async def webhook(
     else:
         print(f"[webhook] update_id={update.update_id} non-text or empty payload")
 
-    return {"status": "ok"}
+    text = update.message.text
+    chat_id = update.message.chat.id
+
+    intent = await classify_intent(text)
+    print(f"chat_id={chat_id} intent={intent} text={text!r}")
+
+    try:
+        await send_message(chat_id, f"Понял, это: {intent}")
+    except httpx.HTTPStatusError as e:
+        print(f"send_message failed: {e}")
+
+    return {"ok": True}
