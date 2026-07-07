@@ -24,7 +24,7 @@ def _load() -> Settings:
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_webhook_secret=os.getenv("TELEGRAM_WEBHOOK_SECRET", ""),
         database_url=os.getenv("DATABASE_URL", ""),
-        redis_url=os.getenv("REDIS_URL", ""),
+        #redis_url=os.getenv("REDIS_URL", ""),
     )
 
 settings = _load()
