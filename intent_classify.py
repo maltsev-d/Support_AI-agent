@@ -1,8 +1,8 @@
 import json
 from groq import AsyncGroq
 from dotenv import load_dotenv
-import os
 import logging
+from config import settings
 
 load_dotenv()
 logger = logging.getLogger(__name__)# если конфиг логгера ещё нигде в проекте не настраивал (basicConfig),
