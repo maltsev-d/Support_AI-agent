@@ -24,6 +24,9 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+@app.head("/health")
+async def health():
+    return {"status": "ok"}
 
 @app.post("/webhook")
 async def webhook(
