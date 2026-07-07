@@ -11,7 +11,7 @@ class Settings:
     telegram_bot_token: str
     telegram_webhook_secret: str  # для валидации, что запрос реально от Telegram
     database_url: str
-    redis_url: str
+    #redis_url: str
 
     def __post_init__(self):
         missing = [k for k, v in self.__dict__.items() if not v]
