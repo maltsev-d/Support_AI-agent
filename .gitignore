@@ -3,9 +3,8 @@ __pycache__/
 *.pyc
 .venv/
 
-
 #Для тестов
-eval_cases.json
-eval_intents.py
-Procfile
-tree.txt
+tests/
+dtatabase/
+alembic/
+alembic.ini
