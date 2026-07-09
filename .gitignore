@@ -8,3 +8,4 @@ tests/
 dtatabase/
 alembic/
 alembic.ini
+models/
