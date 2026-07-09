@@ -17,6 +17,10 @@ app = FastAPI()
 async def health():
     return {"status": "ok"}
 
+@app.head("/health")
+async def health():
+    return {"status": "ok"}
+
 
 async def main():
     port = int(os.getenv("PORT", 8000))
