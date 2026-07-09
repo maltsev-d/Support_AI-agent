@@ -9,7 +9,11 @@ from fastapi import FastAPI
 import uvicorn
 from arq.worker import Worker
 from worker.settings import WorkerSettings
-
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s"
+)
 app = FastAPI()
 
 
