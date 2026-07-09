@@ -3,6 +3,7 @@ from groq import AsyncGroq, APIStatusError, APIConnectionError, APITimeoutError
 from dotenv import load_dotenv
 import logging
 from config import settings
+from core.groq_errors import GroqRateLimitExhausted, is_rate_limit_error, extract_retry_after
 
 load_dotenv()
 logger = logging.getLogger(__name__)# если конфиг логгера ещё нигде в проекте не настраивал (basicConfig),
@@ -87,19 +88,20 @@ async def classify_intent(message_text: str) -> str:
 
 
 async def classify_intent_fallback(message_text: str) -> str:
-    response = await groq_client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[
-            {"role": "system", "content": INTENT_CLASSIFICATION_PROMPT},
-            {"role": "user", "content": message_text}
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.1,
-        max_tokens=100,
-    )
     try:
+        response = await groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": INTENT_CLASSIFICATION_PROMPT},
+                {"role": "user", "content": message_text}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+            max_tokens=100,
+        )
         parsed = json.loads(response.choices[0].message.content)
         intent = parsed.get("intent", "").strip()
         return intent if intent in VALID_INTENTS else "другое"
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Fallback-модель тоже недоступна ({e}), отдаю 'другое'")
         return "другое"

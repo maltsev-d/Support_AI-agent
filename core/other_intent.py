@@ -1,7 +1,7 @@
 # core/other_intent.py
-from groq import AsyncGroq
+from groq import AsyncGroq, APIStatusError
 from config import settings
-
+from core.groq_errors import GroqRateLimitExhausted, is_rate_limit_error, extract_retry_after
 
 
 groq_client = AsyncGroq(api_key=settings.groq_api_key)
@@ -15,12 +15,19 @@ OTHER_INTENT_SYSTEM_PROMPT = """Ты сотрудник поддержки ко�
 что именно его интересует, вместо ответа по существу."""
 
 async def handle_other_intent(message_text: str) -> str:
-    response = await groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": OTHER_INTENT_SYSTEM_PROMPT},
-            {"role": "user", "content": message_text}
-        ],
-        max_tokens=150,
-    )
-    return response.choices[0].message.content.strip()
+    try:
+        response = await groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": OTHER_INTENT_SYSTEM_PROMPT},
+                {"role": "user", "content": message_text}
+            ],
+            max_tokens=150,
+        )
+        return response.choices[0].message.content.strip()
+
+    except APIStatusError as e:
+        if is_rate_limit_error(e):
+            # тут нет fallback-модели — единственная попытка и есть "обе не смогли"
+            raise GroqRateLimitExhausted(retry_after=extract_retry_after(e)) from e
+        raise

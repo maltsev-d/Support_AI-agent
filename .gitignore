@@ -7,3 +7,5 @@ __pycache__/
 #Для тестов
 eval_cases.json
 eval_intents.py
+Procfile
+tree.txt
