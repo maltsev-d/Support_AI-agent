@@ -247,6 +247,14 @@ async def classify_intent_fallback(message_text: str) -> str:
         parsed = json.loads(response.choices[0].message.content)
         intent = parsed.get("intent", "").strip()
         return intent if intent in VALID_INTENTS else "другое"
+
+    except APIStatusError as e:
+        if is_rate_limit_error(e):
+            logger.warning(f"Fallback-модель тоже упёрлась в rate-limit: {e}")
+            raise GroqRateLimitExhausted(retry_after=extract_retry_after(e)) from e
+        logger.warning(f"Fallback-модель вернула ошибку не по rate-limit ({e}), отдаю 'другое'")
+        return "другое"
+
     except Exception as e:
-        logger.warning(f"Fallback-модель тоже недоступна ({e}), отдаю 'другое'")
+        logger.warning(f"Fallback-модель недоступна непредвиденно ({e}), отдаю 'другое'")
         return "другое"

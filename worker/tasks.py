@@ -10,8 +10,8 @@ from core.groq_errors import GroqRateLimitExhausted
 
 logger = logging.getLogger(__name__)
 
-ESCALATION_INTENTS = {"жалоба", "оплата"}
-RAG_INTENTS = {"вопрос_по_продукту", "техподдержка", "доставка"}
+ESCALATION_INTENTS = {"жалоба", "оплата", "доставка"}
+RAG_INTENTS = {"вопрос_по_продукту", "вопрос_по_компании", "техподдержка"}
 
 # тот же порог, что и в main.py — если снова не укладываемся, дальше не крутим,
 # отдаём оператору. Живёт здесь, а не в main.py, потому что ретрай и

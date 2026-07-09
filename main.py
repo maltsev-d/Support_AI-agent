@@ -14,8 +14,8 @@ from core.groq_errors import GroqRateLimitExhausted
 from arq import create_pool
 from arq.connections import RedisSettings
 
-ESCALATION_INTENTS = {"жалоба", "оплата"}
-RAG_INTENTS = {"вопрос_по_продукту", "техподдержка", "доставка"}
+ESCALATION_INTENTS = {"жалоба", "оплата", "доставка"}
+RAG_INTENTS = {"вопрос_по_продукту","вопрос_по_компании", "техподдержка"}
 
 # порог согласован с worker/tasks.py: за ним фоновый ретрай не имеет смысла —
 # юзер не должен ждать ответа дольше 5 минут, эскалируем оператору сразу
