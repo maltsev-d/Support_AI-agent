@@ -9,9 +9,10 @@ load_dotenv()
 class Settings:
     groq_api_key: str
     telegram_bot_token: str
-    telegram_webhook_secret: str  # для валидации, что запрос реально от Telegram
+    telegram_webhook_secret: str
     database_url: str
     redis_url: str
+    cohere_api_key: str          # ← новое
 
     def __post_init__(self):
         missing = [k for k, v in self.__dict__.items() if not v]
@@ -25,6 +26,7 @@ def _load() -> Settings:
         telegram_webhook_secret=os.getenv("TELEGRAM_WEBHOOK_SECRET", ""),
         database_url=os.getenv("DATABASE_URL", ""),
         redis_url=os.getenv("REDIS_URL", ""),
+        cohere_api_key=os.getenv("COHERE_API_KEY", ""),   # ← новое
     )
 
 settings = _load()

@@ -13,9 +13,22 @@ from core.other_intent import handle_other_intent
 from core.groq_errors import GroqRateLimitExhausted
 from arq import create_pool
 from arq.connections import RedisSettings
+from rag.retrieval import retrieve, intent_to_category
+from rag.rag_answer import rag_answer
 
-ESCALATION_INTENTS = {"жалоба", "оплата", "доставка"}
-RAG_INTENTS = {"вопрос_по_продукту","вопрос_по_компании", "техподдержка"}
+ESCALATION_INTENTS = {
+    "техподдержка",
+    "жалоба_по доставке",
+    "жалоба_по_оплате",
+    "жалоба",
+}
+
+RAG_INTENTS = {
+    "вопрос_по_продукту",
+    "вопрос_по_компании",
+    "вопрос_по_доставке",
+    "вопрос_по_оплате",
+}
 
 # порог согласован с worker/tasks.py: за ним фоновый ретрай не имеет смысла —
 # юзер не должен ждать ответа дольше 5 минут, эскалируем оператору сразу
@@ -62,16 +75,23 @@ async def webhook(
     user_id = await get_or_create_user(telegram_id, username=None)
     conversation_id = await get_or_create_conversation(user_id)
 
+    user_message_logged = False  # ← объявляем здесь, до try
+
     try:
+
         intent = await classify_intent(text)
         await log_message(conversation_id, "user", text, intent)
+        user_message_logged = True  # ← classify и log прошли успешно
 
         if intent in ESCALATION_INTENTS:
             await create_escalation(conversation_id, intent, text)
             reply = "Передал ваш вопрос специалисту, скоро ответим."
 
+
         elif intent in RAG_INTENTS:
-            reply = f"[RAG] это: {intent}"
+            category = intent_to_category(intent)
+            chunks = await retrieve(query=text, category=category)
+            reply = await rag_answer(query=text, chunks=chunks)
 
         elif intent == "спам":
             reply = "Если у вас есть конкретный вопрос, сформулируйте его пожалуйста."
@@ -86,11 +106,11 @@ async def webhook(
         except httpx.HTTPStatusError as e:
             print(f"send_message failed: {e}")
 
-    except GroqRateLimitExhausted as e:
-        # classify_intent мог упасть до логирования user-сообщения —
-        # логируем здесь без intent, чтобы след в БД не потерялся
-        await log_message(conversation_id, "user", text, intent=None)
 
+    except GroqRateLimitExhausted as e:
+
+        if not user_message_logged:  # ← упало до log_message, логируем без intent
+            await log_message(conversation_id, "user", text, intent=None)
         if e.retry_after <= RETRY_AFTER_ESCALATION_THRESHOLD:
             await arq_pool.enqueue_job(
                 "retry_llm_pipeline",
@@ -99,7 +119,7 @@ async def webhook(
                 conversation_id=conversation_id,
                 _defer_by=e.retry_after,
             )
-            stub_reply = "Сейчас все операторы и модели заняты, отвечу через пару минут."
+            stub_reply = "Сейчас все операторы заняты, отвечу через пару минут."
             await log_message(conversation_id, "assistant", stub_reply)
             try:
                 await send_message(chat_id, stub_reply)

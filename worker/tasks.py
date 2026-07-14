@@ -4,14 +4,27 @@ import logging
 from core.classify_intent import classify_intent
 from core.other_intent import handle_other_intent
 from telegram.telegram_client import send_message
-from db import get_or_create_conversation, log_message
+from db import get_or_create_conversation, log_message #### ПОЧЕМУ НЕ ИСПОЛЬЗУЕМ
 from core.escalation import create_escalation
 from core.groq_errors import GroqRateLimitExhausted
+from rag.retrieval import retrieve, intent_to_category
+from rag.rag_answer import rag_answer
 
 logger = logging.getLogger(__name__)
 
-ESCALATION_INTENTS = {"жалоба", "оплата", "доставка"}
-RAG_INTENTS = {"вопрос_по_продукту", "вопрос_по_компании", "техподдержка"}
+ESCALATION_INTENTS = {
+    "техподдержка",
+    "жалоба_по доставке",
+    "жалоба_по_оплате",
+    "жалоба",
+}
+
+RAG_INTENTS = {
+    "вопрос_по_продукту",
+    "вопрос_по_компании",
+    "вопрос_по_доставке",
+    "вопрос_по_оплате",
+}
 
 # тот же порог, что и в main.py — если снова не укладываемся, дальше не крутим,
 # отдаём оператору. Живёт здесь, а не в main.py, потому что ретрай и
@@ -38,8 +51,11 @@ async def retry_llm_pipeline(
             await create_escalation(conversation_id, intent, text)
             reply = "Передал ваш вопрос специалисту, скоро ответим."
 
+
         elif intent in RAG_INTENTS:
-            reply = f"[RAG] это: {intent}"
+            category = intent_to_category(intent)
+            chunks = await retrieve(query=text, category=category)
+            reply = await rag_answer(query=text, chunks=chunks)
 
         elif intent == "спам":
             reply = "Если у вас есть конкретный вопрос, сформулируйте его пожалуйста."

@@ -10,3 +10,4 @@ alembic/
 alembic.ini
 models/
 schema.sql
+evaluation/
