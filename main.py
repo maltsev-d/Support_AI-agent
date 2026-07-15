@@ -70,12 +70,32 @@ arq_pool = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global arq_pool, redis_client
-    await init_pool()
-    arq_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-    redis_client = AIORedis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        print("[lifespan] Инициализирую БД пул...")
+        await init_pool()
+        print("[lifespan] БД пул создан")
+
+        print("[lifespan] Инициализирую ARQ пул...")
+        arq_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+        print("[lifespan] ARQ пул создан")
+
+        print("[lifespan] Инициализирую Redis клиент...")
+        redis_client = AIORedis.from_url(settings.redis_url, decode_responses=True)
+        print("[lifespan] Redis клиент создан")
+
+    except Exception as e:
+        print(f"[lifespan] ОШИБКА при инициализации: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
     yield
-    await close_pool()
-    await redis_client.aclose()
+
+    try:
+        await close_pool()
+        await redis_client.aclose()
+    except Exception as e:
+        print(f"[lifespan] Ошибка при shutdown: {e}")
 
 
 app = FastAPI(lifespan=lifespan)
