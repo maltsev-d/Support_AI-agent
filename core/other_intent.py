@@ -35,7 +35,14 @@ OTHER_INTENT_SYSTEM_PROMPT = """Ты — дружелюбный сотрудни
 
 Главное — общайся естественно, спокойно и доброжелательно."""
 
-async def handle_other_intent(message_text: str) -> str:
+async def handle_other_intent(
+    message_text: str,
+    history: list[dict] | None = None,
+) -> str:
+    messages = [{"role": "system", "content": OTHER_INTENT_SYSTEM_PROMPT}]
+    if history:
+        messages.extend(history)
+    messages.append({"role": "user", "content": message_text})
     try:
         response = await groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile", #llama-3.1-8b-instant #llama-3.3-70b-versatile
@@ -43,7 +50,7 @@ async def handle_other_intent(message_text: str) -> str:
                 {"role": "system", "content": OTHER_INTENT_SYSTEM_PROMPT},
                 {"role": "user", "content": message_text}
             ],
-            max_tokens=400,
+            max_tokens=200,
             temperature=0.5,
         )
         return response.choices[0].message.content.strip()

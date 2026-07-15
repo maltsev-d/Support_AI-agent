@@ -1,21 +1,49 @@
 # main.py
-from fastapi import FastAPI, Header, HTTPException
-from config import settings
-from telegram.telegram_models import TelegramUpdate
+import time
 import hmac
 import httpx
-from telegram.telegram_client import send_message
-from core.classify_intent import classify_intent
 from contextlib import asynccontextmanager
-from db import init_pool, close_pool, get_or_create_user, get_or_create_conversation, log_message
+from fastapi import FastAPI, Header, HTTPException
+from arq import create_pool
+from arq.connections import RedisSettings
+from redis.asyncio import Redis as AIORedis
+
+from config import settings
+from telegram.telegram_models import TelegramUpdate
+from telegram.telegram_client import (
+    send_message,
+    answer_callback_query,
+    send_message_with_reply_keyboard,
+    remove_reply_keyboard
+)
+
+from core.classify_intent import classify_intent
 from core.escalation import create_escalation
 from core.other_intent import handle_other_intent
 from core.groq_errors import GroqRateLimitExhausted
-from arq import create_pool
-from arq.connections import RedisSettings
+from db import (
+    init_pool,
+    close_pool,
+    get_or_create_user,
+    get_or_create_conversation,
+    log_message,
+    get_conversation_history,
+    take_escalation,
+    update_conversation_status,
+    resolve_escalation,
+    pool
+)
 from rag.retrieval import retrieve, intent_to_category
 from rag.rag_answer import rag_answer
-
+from config import OPERATOR_CHAT_IDS, OPERATOR_DEFAULT_CHAT_ID
+from core.redis_session import (
+    set_operator_session,
+    get_conversation_by_operator,
+    get_operator_by_conversation,
+    get_client_chat,
+    clear_operator_session,
+)
+from telegram.telegram_client import send_message_with_inline_button
 ESCALATION_INTENTS = {
     "техподдержка",
     "жалоба_по доставке",
@@ -30,87 +58,243 @@ RAG_INTENTS = {
     "вопрос_по_оплате",
 }
 
-# порог согласован с worker/tasks.py: за ним фоновый ретрай не имеет смысла —
-# юзер не должен ждать ответа дольше 5 минут, эскалируем оператору сразу
+# Если retry_after больше порога — не ждём, сразу к оператору
 RETRY_AFTER_ESCALATION_THRESHOLD = 300
 
+# Диалог закрывается если 24 часа не было сообщений
+RESOLVE_AFTER_SECONDS = 24 * 60 * 60
+
+redis_client: AIORedis | None = None
 arq_pool = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global arq_pool
+    global arq_pool, redis_client
     await init_pool()
     arq_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    redis_client = AIORedis.from_url(settings.redis_url, decode_responses=True)
     yield
     await close_pool()
+    await redis_client.aclose()
+
+
 app = FastAPI(lifespan=lifespan)
+
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
 @app.head("/health")
-async def health():
+async def health_head():
     return {"status": "ok"}
+
+
+@app.post("/conversation/{conversation_id}/resolve")
+async def resolve_conversation(conversation_id: int):
+    """
+    Endpoint для n8n: оператор закрыл эскалацию вручную.
+    n8n дёргает этот URL после обработки тикета.
+    """
+    from db import update_conversation_status, resolve_escalation
+    await update_conversation_status(conversation_id, "resolved")
+    await resolve_escalation(conversation_id)  # добавить
+    return {"ok": True, "conversation_id": conversation_id, "status": "resolved"}
+
 
 @app.post("/webhook")
 async def webhook(
     update: TelegramUpdate,
-    x_telegram_bot_api_secret_token: str | None = Header(default=None)
+    x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ):
     if not hmac.compare_digest(
-            x_telegram_bot_api_secret_token or "",
-            settings.telegram_webhook_secret
+        x_telegram_bot_api_secret_token or "",
+        settings.telegram_webhook_secret,
     ):
         raise HTTPException(status_code=403, detail="Invalid secret token")
 
-    if update.message and update.message.text:
-        print(f"[webhook] chat_id={update.message.chat.id} text={update.message.text!r}")
-    else:
-        print(f"[webhook] update_id={update.update_id} non-text or empty payload")
+    # ── ВЕТКА 1: callback_query от Inline кнопки "Взять в работу" ──
+    if update.callback_query:
+        cq = update.callback_query
+        data = cq.data or ""
+        operator_chat_id = cq.from_user.id if cq.from_user else None
+
+        if data.startswith("escalate:") and operator_chat_id:
+            conversation_id = int(data.split(":")[1])
+            client_chat_id = cq.message.chat.id  # ← вот отсюда
+
+            await answer_callback_query(cq.id)
+
+            # Определяем reason по дефолту — клиент сам попросил оператора
+            await create_escalation(
+                conversation_id,
+                intent="другое",
+                message_text="Клиент запросил соединение с оператором",
+                chat_id=client_chat_id,  # chat_id клиента
+                reason="manual",
+            )
+            await send_message(
+                cq.message.message.chat.id,  # клиенту
+                "Соединяю вас со специалистом, ожидайте.",
+            )
+
+        if data.startswith("take:") and operator_chat_id:
+            conversation_id = int(data.split(":")[1])
+            client_chat_id = int(data.split(":")[2])
+
+            # Берём эскалацию в работу
+            await take_escalation(conversation_id)
+
+            # Пишем сессию в Redis
+            await set_operator_session(
+                redis_client, operator_chat_id, conversation_id, client_chat_id
+            )
+
+            # Отвечаем на callback (убираем индикатор загрузки на кнопке)
+            await answer_callback_query(cq.id)
+
+            # Показываем оператору Reply Keyboard с кнопкой закрытия
+            await send_message_with_reply_keyboard(
+                operator_chat_id,
+                f"✅ Взяли в работу диалог #{conversation_id}. "
+                f"Ваши сообщения идут клиенту.",
+            )
+
+        return {"ok": True}
+
+    if not update.message or not update.message.text:
+        return {"ok": True}
 
     text = update.message.text
     chat_id = update.message.chat.id
-    telegram_id = update.message.chat.id  # для приватных чатов chat.id == user.id
+
+    # ── ВЕТКА 2: сообщение от оператора ──
+    all_operator_ids = set(OPERATOR_CHAT_IDS.values()) | {OPERATOR_DEFAULT_CHAT_ID}
+    if chat_id in all_operator_ids:
+
+        if text == "Закрыть диалог":
+            conversation_id = await get_conversation_by_operator(redis_client, chat_id)
+            if conversation_id:
+                client_chat_id = await get_client_chat(redis_client, conversation_id)
+                await clear_operator_session(redis_client, chat_id, conversation_id)
+                await update_conversation_status(conversation_id, "resolved")
+                await resolve_escalation(conversation_id)
+                await remove_reply_keyboard(chat_id, "Диалог закрыт.")
+                if client_chat_id:
+                    await send_message(
+                        client_chat_id,
+                        "Вопрос решён. Если появятся новые вопросы — пишите.",
+                    )
+            else:
+                await send_message(chat_id, "Нет активного диалога.")
+        else:
+            # Обычное сообщение оператора → пересылаем клиенту
+            conversation_id = await get_conversation_by_operator(redis_client, chat_id)
+            if conversation_id:
+                client_chat_id = await get_client_chat(redis_client, conversation_id)
+                if client_chat_id:
+                    await send_message(client_chat_id, text)
+                    await log_message(conversation_id, "operator", text)
+            else:
+                await send_message(chat_id, "Нет активного диалога.")
+
+        return {"ok": True}
+
+    # ── ВЕТКА 3: сообщение от клиента в escalated диалоге ──
+    user_id = await get_or_create_user(chat_id, username=None)
+    conversation_id = await get_or_create_conversation(user_id)
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status FROM conversations WHERE id = $1", conversation_id
+        )
+
+    if row and row["status"] == "escalated":
+        await log_message(conversation_id, "user", text)
+        operator_chat_id = await get_operator_by_conversation(
+            redis_client, conversation_id
+        )
+        if operator_chat_id:
+            await send_message(
+                operator_chat_id,
+                f"👤 Клиент: {text}",
+            )
+        return {"ok": True}
+
+    if not update.message or not update.message.text:
+        return {"ok": True}
+
+    text = update.message.text
+    chat_id = update.message.chat.id
+    telegram_id = update.message.chat.id
+
+    print(f"[webhook] chat_id={chat_id} text={text!r}")
 
     user_id = await get_or_create_user(telegram_id, username=None)
     conversation_id = await get_or_create_conversation(user_id)
 
-    user_message_logged = False  # ← объявляем здесь, до try
+    # Флаг предотвращает дублирование лога user-сообщения при GroqRateLimitExhausted:
+    # classify_intent может упасть до log_message — тогда логируем в except без intent.
+    # Если classify прошёл, а упал rag_answer — сообщение уже залогировано, не дублируем.
+    user_message_logged = False
 
     try:
-
         intent = await classify_intent(text)
+        history = await get_conversation_history(conversation_id)
         await log_message(conversation_id, "user", text, intent)
-        user_message_logged = True  # ← classify и log прошли успешно
+        user_message_logged = True
 
         if intent in ESCALATION_INTENTS:
-            await create_escalation(conversation_id, intent, text)
+            await create_escalation(conversation_id, intent, text, chat_id=chat_id)
             reply = "Передал ваш вопрос специалисту, скоро ответим."
-
 
         elif intent in RAG_INTENTS:
             category = intent_to_category(intent)
             chunks = await retrieve(query=text, category=category)
-            reply = await rag_answer(query=text, chunks=chunks)
+            reply = await rag_answer(query=text, chunks=chunks, history=history)
+
+            # TEMP: показываем кнопку всегда для тестов
+            # TODO: убрать `or True` после тестирования
+            if not chunks or True:  # RAG вернул пустой контекст
+                await send_message_with_inline_button(
+                    chat_id,
+                    reply,  # NO_CONTEXT_REPLY
+                    button_text="👤 Соединить с оператором",
+                    callback_data=f"escalate:{conversation_id}",
+                )
+            else:
+                await send_message(chat_id, reply)
 
         elif intent == "спам":
             reply = "Если у вас есть конкретный вопрос, сформулируйте его пожалуйста."
 
         else:
-            reply = await handle_other_intent(text)
+            reply = await handle_other_intent(text, history=history)
 
         await log_message(conversation_id, "assistant", reply)
+
+        # Ставим задачу mark_resolved на 24 часа.
+        # scheduled_at = текущий момент: если до срабатывания придут новые
+        # сообщения, last_message_at будет позже scheduled_at и задача пропустит закрытие.
+        # Эскалации не закрываем так — их закрывает оператор через /resolve.
+        if intent not in ESCALATION_INTENTS:
+            await arq_pool.enqueue_job(
+                "mark_resolved",
+                conversation_id=conversation_id,
+                scheduled_at=time.time(),
+                _defer_by=RESOLVE_AFTER_SECONDS,
+            )
 
         try:
             await send_message(chat_id, reply)
         except httpx.HTTPStatusError as e:
-            print(f"send_message failed: {e}")
-
+            print(f"[webhook] send_message failed: {e}")
 
     except GroqRateLimitExhausted as e:
-
-        if not user_message_logged:  # ← упало до log_message, логируем без intent
+        if not user_message_logged:
             await log_message(conversation_id, "user", text, intent=None)
+
         if e.retry_after <= RETRY_AFTER_ESCALATION_THRESHOLD:
             await arq_pool.enqueue_job(
                 "retry_llm_pipeline",
@@ -124,12 +308,13 @@ async def webhook(
             try:
                 await send_message(chat_id, stub_reply)
             except httpx.HTTPStatusError as send_err:
-                print(f"send_message failed: {send_err}")
+                print(f"[webhook] send_message failed: {send_err}")
         else:
             await create_escalation(
                 conversation_id,
                 intent="другое",
                 message_text=text,
+                chat_id=chat_id,
                 reason="llm_unavailable",
             )
             fallback_reply = "Прошу прощения за ожидание — передал ваш вопрос специалисту."
@@ -137,6 +322,6 @@ async def webhook(
             try:
                 await send_message(chat_id, fallback_reply)
             except httpx.HTTPStatusError as send_err:
-                print(f"send_message failed: {send_err}")
+                print(f"[webhook] send_message failed: {send_err}")
 
     return {"ok": True}

@@ -94,6 +94,7 @@ def _build_context(chunks: list[RetrievedChunk]) -> str:
 async def rag_answer(
         query: str,
         chunks: list[RetrievedChunk],
+        history: list[dict] | None = None,
 ) -> str:
     """
     Финальный шаг RAG: чанки + вопрос → ответ Groq.
@@ -111,15 +112,19 @@ async def rag_answer(
     print(f"[rag_answer] Чанков в контексте: {len(chunks)}")
 
     if not chunks:
-        print(f"[rag_answer] Контекст пуст → возвращаем заглушку без вызова Groq")
         return NO_CONTEXT_REPLY
 
     context = _build_context(chunks)
     system_prompt = RAG_SYSTEM_TEMPLATE.format(context=context)
 
+    messages = [{"role": "system", "content": system_prompt}]
+    if history:
+        messages.extend(history)
+    messages.append({"role": "user", "content": query})
+
     print(f"[rag_answer] Длина system prompt: {len(system_prompt)} символов")
-    print(f"[rag_answer] Контекст (первые 300 символов):\n{context[:300]}")
-    print(f"[rag_answer] Отправляем в Groq (model=llama-3.3-70b-versatile)...")
+    print(f"[rag_answer] Контекст (первые 100 символов):\n{context[:100]}")
+    print(f"[rag_answer] Отправляем в Groq (model-70b)...")
 
     try:
         response = await _groq.chat.completions.create(
@@ -128,7 +133,7 @@ async def rag_answer(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": query},
             ],
-            max_tokens=400,
+            max_tokens=300,
             temperature=0.2,
         )
         answer = response.choices[0].message.content.strip()

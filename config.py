@@ -13,6 +13,7 @@ class Settings:
     database_url: str
     redis_url: str
     cohere_api_key: str          # ← новое
+    n8n_escalation_webhook: str
 
     def __post_init__(self):
         missing = [k for k, v in self.__dict__.items() if not v]
@@ -27,6 +28,16 @@ def _load() -> Settings:
         database_url=os.getenv("DATABASE_URL", ""),
         redis_url=os.getenv("REDIS_URL", ""),
         cohere_api_key=os.getenv("COHERE_API_KEY", ""),   # ← новое
+        n8n_escalation_webhook = os.getenv("N8N_ESCALATION_WEBHOOK", ""),
     )
 
 settings = _load()
+
+# Хардкод операторов: reason → telegram chat_id оператора
+# "остальные" (complaint, manual, llm_unavailable) → дефолтный оператор
+OPERATOR_CHAT_IDS: dict[str, int] = {
+    "delivery_issue": 1330337711,   # ← подставь реальные chat_id
+    "payment_issue":  2222222222,
+    "support":        5605852182,
+}
+OPERATOR_DEFAULT_CHAT_ID: int = 6242509450  # complaint, manual, llm_unavailable
