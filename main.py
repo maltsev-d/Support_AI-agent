@@ -31,8 +31,8 @@ from db import (
     take_escalation,
     update_conversation_status,
     resolve_escalation,
-    pool
 )
+import db
 from rag.retrieval import retrieve, intent_to_category
 from rag.rag_answer import rag_answer
 from config import OPERATOR_CHAT_IDS, OPERATOR_DEFAULT_CHAT_ID
@@ -225,7 +225,7 @@ async def webhook(
     user_id = await get_or_create_user(chat_id, username=None)
     conversation_id = await get_or_create_conversation(user_id)
 
-    async with pool.acquire() as conn:
+    async with db.pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT status FROM conversations WHERE id = $1", conversation_id
         )
