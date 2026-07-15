@@ -36,8 +36,8 @@ settings = _load()
 # Хардкод операторов: reason → telegram chat_id оператора
 # "остальные" (complaint, manual, llm_unavailable) → дефолтный оператор
 OPERATOR_CHAT_IDS: dict[str, int] = {
-    "delivery_issue": 1330337711,   # ← подставь реальные chat_id
-    "payment_issue":  2222222222,
+    "delivery_issue": 5605852182,   # ← подставь реальные chat_id
+    "payment_issue":  5605852182,
     "support":        5605852182,
 }
-OPERATOR_DEFAULT_CHAT_ID: int = 6242509450  # complaint, manual, llm_unavailable
+OPERATOR_DEFAULT_CHAT_ID: int = 5605852182  # complaint, manual, llm_unavailable
