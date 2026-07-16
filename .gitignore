@@ -5,9 +5,9 @@ __pycache__/
 
 #Для тестов
 tests/
-database/
-alembic/
-alembic.ini
-models/
-schema.sql
 evaluation/
+rag/knowledge_base/
+rag/knowledge_base/company/
+rag/knowledge_base/delivery/
+rag/knowledge_base/payments/
+rag/knowledge_base/products/

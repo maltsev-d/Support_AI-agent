@@ -236,6 +236,15 @@ async def webhook(
     # ── Обычный пайплайн (active диалог) ──
     conversation_id = await get_or_create_conversation(user_id)
 
+    # ── /start ──────────────────────────────────────────────────
+    if text.strip() == "/start":
+        await send_message(chat_id, (
+            "Привет! Я виртуальный помощник службы поддержки.\n"
+            "Помогу с вопросами о товарах, доставке, оплате и работе компании.\n\n"
+            "Просто напишите ваш вопрос — отвечу сразу."
+        ))
+        return {"ok": True}
+
     user_message_logged = False
     message_sent = False
 
@@ -254,8 +263,8 @@ async def webhook(
             chunks = await retrieve(query=text, category=category)
             reply = await rag_answer(query=text, chunks=chunks, history=history)
 
-            # TODO: убрать `or True` после тестирования
-            if not chunks or True:
+            # убрать `or True` после тестирования
+            if not chunks:
                 await send_message_with_inline_button(
                     chat_id,
                     reply,

@@ -5,7 +5,7 @@ import time
 from core.classify_intent import classify_intent
 from core.other_intent import handle_other_intent
 from telegram.telegram_client import send_message
-from db import log_message, update_conversation_status
+from db import log_message, update_conversation_status, get_conversation_history
 from core.escalation import create_escalation
 from core.groq_errors import GroqRateLimitExhausted
 from rag.retrieval import retrieve, intent_to_category
@@ -37,14 +37,9 @@ async def retry_llm_pipeline(
     text: str,
     conversation_id: int,
 ) -> None:
-    """
-    Повторяет classify_intent → ветка ответа → send_message.
-    conversation_id приходит из main.py — там уже создан и залогировано
-    user-сообщение. Воркер пишет только ответ ассистента.
-    db.pool доступен через on_startup в WorkerSettings.
-    """
     try:
         intent = await classify_intent(text)
+        history = await get_conversation_history(conversation_id)  # ← добавили
 
         if intent in ESCALATION_INTENTS:
             await create_escalation(conversation_id, intent, text, chat_id=chat_id)
@@ -53,13 +48,13 @@ async def retry_llm_pipeline(
         elif intent in RAG_INTENTS:
             category = intent_to_category(intent)
             chunks = await retrieve(query=text, category=category)
-            reply = await rag_answer(query=text, chunks=chunks)
+            reply = await rag_answer(query=text, chunks=chunks, history=history)  # ← пробросили
 
         elif intent == "спам":
             reply = "Если у вас есть конкретный вопрос, сформулируйте его пожалуйста."
 
         else:
-            reply = await handle_other_intent(text)
+            reply = await handle_other_intent(text, history=history)  # ← пробросили
 
         await log_message(conversation_id, "assistant", reply)
         await send_message(chat_id, reply)
