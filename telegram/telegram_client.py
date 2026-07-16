@@ -50,6 +50,7 @@ async def send_message_with_reply_keyboard(chat_id: int, text: str) -> None:
         "keyboard": [["Закрыть диалог"]],
         "resize_keyboard": True,
         "one_time_keyboard": False,
+        "persistent": True,  # ← держит клавиатуру видимой всегда
     }
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
