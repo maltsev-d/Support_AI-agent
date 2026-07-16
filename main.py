@@ -155,7 +155,7 @@ async def webhook(
                 reason="manual",
             )
             await send_message(
-                cq.message.message.chat.id,  # клиенту
+                cq.message.chat.id,  # клиенту
                 "Соединяю вас со специалистом, ожидайте.",
             )
 
@@ -258,6 +258,7 @@ async def webhook(
     # classify_intent может упасть до log_message — тогда логируем в except без intent.
     # Если classify прошёл, а упал rag_answer — сообщение уже залогировано, не дублируем.
     user_message_logged = False
+    message_sent = False  # ← добавить
 
     try:
         intent = await classify_intent(text)
@@ -283,8 +284,11 @@ async def webhook(
                     button_text="👤 Соединить с оператором",
                     callback_data=f"escalate:{conversation_id}",
                 )
+                message_sent = True  # ← уже отправили
             else:
                 await send_message(chat_id, reply)
+                message_sent = True
+
 
         elif intent == "спам":
             reply = "Если у вас есть конкретный вопрос, сформулируйте его пожалуйста."
@@ -339,9 +343,10 @@ async def webhook(
             )
             fallback_reply = "Прошу прощения за ожидание — передал ваш вопрос специалисту."
             await log_message(conversation_id, "assistant", fallback_reply)
-            try:
-                await send_message(chat_id, fallback_reply)
-            except httpx.HTTPStatusError as send_err:
-                print(f"[webhook] send_message failed: {send_err}")
+            if not message_sent:  # ← финальный send_message только если ещё не отправляли
+                try:
+                    await send_message(chat_id, reply)
+                except httpx.HTTPStatusError as e:
+                    print(f"[webhook] send_message failed: {e}")
 
     return {"ok": True}
