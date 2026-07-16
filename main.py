@@ -125,60 +125,53 @@ async def resolve_conversation(conversation_id: int):
 
 @app.post("/webhook")
 async def webhook(
-    update: TelegramUpdate,
-    x_telegram_bot_api_secret_token: str | None = Header(default=None),
+        update: TelegramUpdate,
+        x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ):
     if not hmac.compare_digest(
-        x_telegram_bot_api_secret_token or "",
-        settings.telegram_webhook_secret,
+            x_telegram_bot_api_secret_token or "",
+            settings.telegram_webhook_secret,
     ):
         raise HTTPException(status_code=403, detail="Invalid secret token")
 
-    # ── ВЕТКА 1: callback_query от Inline кнопки "Взять в работу" ──
+    # ── ВЕТКА 1: callback_query ──
     if update.callback_query:
         cq = update.callback_query
         data = cq.data or ""
-        operator_chat_id = cq.from_user.id if cq.from_user else None
+        sender_id = cq.from_user.id if cq.from_user else None
 
-        if data.startswith("escalate:") and operator_chat_id:
+        if data.startswith("escalate:") and sender_id:
             conversation_id = int(data.split(":")[1])
-            client_chat_id = cq.message.chat.id  # ← вот отсюда
+            client_chat_id = cq.message.chat.id
 
+            # Сначала отвечаем на callback — иначе Telegram будет повторять запрос
             await answer_callback_query(cq.id)
 
-            # Определяем reason по дефолту — клиент сам попросил оператора
             await create_escalation(
                 conversation_id,
                 intent="другое",
                 message_text="Клиент запросил соединение с оператором",
-                chat_id=client_chat_id,  # chat_id клиента
+                chat_id=client_chat_id,
                 reason="manual",
             )
-            await send_message(
-                cq.message.chat.id,  # клиенту
-                "Соединяю вас со специалистом, ожидайте.",
-            )
+            await send_message(client_chat_id, "Соединяю вас со специалистом, ожидайте.")
 
-        if data.startswith("take:") and operator_chat_id:
-            conversation_id = int(data.split(":")[1])
-            client_chat_id = int(data.split(":")[2])
+        elif data.startswith("take:") and sender_id:
+            operator_chat_id = sender_id
+            parts = data.split(":")
+            conversation_id = int(parts[1])
+            client_chat_id = int(parts[2])
 
-            # Берём эскалацию в работу
+            # Сначала отвечаем на callback
+            await answer_callback_query(cq.id)
+
             await take_escalation(conversation_id)
-
-            # Пишем сессию в Redis
             await set_operator_session(
                 redis_client, operator_chat_id, conversation_id, client_chat_id
             )
-
-            # Отвечаем на callback (убираем индикатор загрузки на кнопке)
-            await answer_callback_query(cq.id)
-
-            # Показываем оператору Reply Keyboard с кнопкой закрытия
             await send_message_with_reply_keyboard(
                 operator_chat_id,
-                f"✅ Взяли в работу диалог #{conversation_id}. "
-                f"Ваши сообщения идут клиенту.",
+                f"✅ Взяли в работу диалог #{conversation_id}.\nВаши сообщения идут клиенту.",
             )
 
         return {"ok": True}
@@ -189,10 +182,11 @@ async def webhook(
     text = update.message.text
     chat_id = update.message.chat.id
 
+    print(f"[webhook] chat_id={chat_id} text={text!r}")
+
     # ── ВЕТКА 2: сообщение от оператора ──
     all_operator_ids = set(OPERATOR_CHAT_IDS.values()) | {OPERATOR_DEFAULT_CHAT_ID}
     if chat_id in all_operator_ids:
-
         if text == "Закрыть диалог":
             conversation_id = await get_conversation_by_operator(redis_client, chat_id)
             if conversation_id:
@@ -203,62 +197,47 @@ async def webhook(
                 await remove_reply_keyboard(chat_id, "Диалог закрыт.")
                 if client_chat_id:
                     await send_message(
-                        client_chat_id,
+                        int(client_chat_id),
                         "Вопрос решён. Если появятся новые вопросы — пишите.",
                     )
             else:
                 await send_message(chat_id, "Нет активного диалога.")
         else:
-            # Обычное сообщение оператора → пересылаем клиенту
             conversation_id = await get_conversation_by_operator(redis_client, chat_id)
             if conversation_id:
                 client_chat_id = await get_client_chat(redis_client, conversation_id)
                 if client_chat_id:
-                    await send_message(client_chat_id, text)
-                    await log_message(conversation_id, "operator", text)
+                    await send_message(int(client_chat_id), text)
+                    await log_message(int(conversation_id), "operator", text)
             else:
                 await send_message(chat_id, "Нет активного диалога.")
 
         return {"ok": True}
 
-    # ── ВЕТКА 3: сообщение от клиента в escalated диалоге ──
+    # ── ВЕТКА 3: клиент в escalated диалоге ──
     user_id = await get_or_create_user(chat_id, username=None)
-    conversation_id = await get_or_create_conversation(user_id)
 
     async with db.pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT status FROM conversations WHERE id = $1", conversation_id
+            """SELECT id, status
+               FROM conversations
+               WHERE user_id = $1
+               ORDER BY created_at DESC LIMIT 1""",
+            user_id,
         )
 
     if row and row["status"] == "escalated":
-        await log_message(conversation_id, "user", text)
-        operator_chat_id = await get_operator_by_conversation(
-            redis_client, conversation_id
-        )
+        await log_message(row["id"], "user", text)
+        operator_chat_id = await get_operator_by_conversation(redis_client, row["id"])
         if operator_chat_id:
-            await send_message(
-                operator_chat_id,
-                f"👤 Клиент: {text}",
-            )
+            await send_message(int(operator_chat_id), f"👤 Клиент: {text}")
         return {"ok": True}
 
-    if not update.message or not update.message.text:
-        return {"ok": True}
-
-    text = update.message.text
-    chat_id = update.message.chat.id
-    telegram_id = update.message.chat.id
-
-    print(f"[webhook] chat_id={chat_id} text={text!r}")
-
-    user_id = await get_or_create_user(telegram_id, username=None)
+    # ── Обычный пайплайн (active диалог) ──
     conversation_id = await get_or_create_conversation(user_id)
 
-    # Флаг предотвращает дублирование лога user-сообщения при GroqRateLimitExhausted:
-    # classify_intent может упасть до log_message — тогда логируем в except без intent.
-    # Если classify прошёл, а упал rag_answer — сообщение уже залогировано, не дублируем.
     user_message_logged = False
-    message_sent = False  # ← добавить
+    message_sent = False
 
     try:
         intent = await classify_intent(text)
@@ -275,20 +254,18 @@ async def webhook(
             chunks = await retrieve(query=text, category=category)
             reply = await rag_answer(query=text, chunks=chunks, history=history)
 
-            # TEMP: показываем кнопку всегда для тестов
             # TODO: убрать `or True` после тестирования
-            if not chunks or True:  # RAG вернул пустой контекст
+            if not chunks or True:
                 await send_message_with_inline_button(
                     chat_id,
-                    reply,  # NO_CONTEXT_REPLY
+                    reply,
                     button_text="👤 Соединить с оператором",
                     callback_data=f"escalate:{conversation_id}",
                 )
-                message_sent = True  # ← уже отправили
+                message_sent = True
             else:
                 await send_message(chat_id, reply)
                 message_sent = True
-
 
         elif intent == "спам":
             reply = "Если у вас есть конкретный вопрос, сформулируйте его пожалуйста."
@@ -298,10 +275,6 @@ async def webhook(
 
         await log_message(conversation_id, "assistant", reply)
 
-        # Ставим задачу mark_resolved на 24 часа.
-        # scheduled_at = текущий момент: если до срабатывания придут новые
-        # сообщения, last_message_at будет позже scheduled_at и задача пропустит закрытие.
-        # Эскалации не закрываем так — их закрывает оператор через /resolve.
         if intent not in ESCALATION_INTENTS:
             await arq_pool.enqueue_job(
                 "mark_resolved",
@@ -310,10 +283,11 @@ async def webhook(
                 _defer_by=RESOLVE_AFTER_SECONDS,
             )
 
-        try:
-            await send_message(chat_id, reply)
-        except httpx.HTTPStatusError as e:
-            print(f"[webhook] send_message failed: {e}")
+        if not message_sent:
+            try:
+                await send_message(chat_id, reply)
+            except httpx.HTTPStatusError as e:
+                print(f"[webhook] send_message failed: {e}")
 
     except GroqRateLimitExhausted as e:
         if not user_message_logged:
@@ -343,10 +317,9 @@ async def webhook(
             )
             fallback_reply = "Прошу прощения за ожидание — передал ваш вопрос специалисту."
             await log_message(conversation_id, "assistant", fallback_reply)
-            if not message_sent:  # ← финальный send_message только если ещё не отправляли
-                try:
-                    await send_message(chat_id, reply)
-                except httpx.HTTPStatusError as e:
-                    print(f"[webhook] send_message failed: {e}")
+            try:
+                await send_message(chat_id, fallback_reply)
+            except httpx.HTTPStatusError as send_err:
+                print(f"[webhook] send_message failed: {send_err}")
 
     return {"ok": True}

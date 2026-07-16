@@ -14,17 +14,13 @@ from redis.asyncio import Redis
 SESSION_TTL = 86400  # 24 часа
 
 
-async def set_operator_session(
-    redis: Redis,
-    operator_chat_id: int,
-    conversation_id: int,
-    client_chat_id: int,
-) -> None:
+async def set_operator_session(redis, operator_chat_id, conversation_id, client_chat_id):
     pipe = redis.pipeline()
     pipe.setex(f"operator_session:{operator_chat_id}", SESSION_TTL, conversation_id)
     pipe.setex(f"operator_active:{conversation_id}", SESSION_TTL, operator_chat_id)
     pipe.setex(f"client_chat:{conversation_id}", SESSION_TTL, client_chat_id)
-    await pipe.execute()
+    result = await pipe.execute()
+    print(f"[redis_session] set result: {result}")  # ← должно быть [True, True, True]
 
 
 async def get_conversation_by_operator(
