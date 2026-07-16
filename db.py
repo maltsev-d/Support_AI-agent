@@ -117,7 +117,7 @@ async def resolve_escalation(conversation_id: int) -> None:
             """
             UPDATE escalations
             SET status = 'handled', handled_at = now()
-            WHERE conversation_id = $1 AND status = 'pending'
+            WHERE conversation_id = $1 AND status = 'active'
             """,
             conversation_id,
         )
