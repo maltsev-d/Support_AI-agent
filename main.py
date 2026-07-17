@@ -424,7 +424,7 @@ async def _init_drive_watch() -> None:
     active = await get_active_watch_channels()
     active_folders = {ch["folder_id"] for ch in active}
 
-    webhook_url = f"https://{settings.render_app_url}/drive/webhook?token={settings.google_webhook_secret}"
+    webhook_url = f"https://{settings.render_app_url}drive/webhook?token={settings.google_webhook_secret}"
 
     for category, folder_id in DRIVE_FOLDER_MAP.items():
         if folder_id in active_folders:

@@ -4,6 +4,12 @@ from pydantic import BaseModel, Field
 class TelegramChat(BaseModel):
     id: int
 
+class TelegramVoice(BaseModel):
+    file_id: str
+    duration: int
+    mime_type: str | None = None
+    file_size: int | None = None
+
 class TelegramMessage(BaseModel):
     message_id: int
     text: str | None = None
@@ -25,9 +31,3 @@ class TelegramUpdate(BaseModel):
     update_id: int
     message: TelegramMessage | None = None
     callback_query: TelegramCallbackQuery | None = None
-
-class TelegramMessage(BaseModel):
-    message_id: int
-    text: str | None = None
-    chat: TelegramChat
-    voice: TelegramVoice | None = None  # ← добавить
