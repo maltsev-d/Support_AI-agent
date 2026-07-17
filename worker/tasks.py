@@ -127,3 +127,108 @@ async def mark_resolved(
 
     await update_conversation_status(conversation_id, "resolved")
     logger.info(f"[mark_resolved] conversation {conversation_id} → resolved")
+
+
+
+
+
+    """
+    Что происходит при изменении файла на Drive:
+
+    1. Drive шлёт POST на /drive/webhook — пустое тело, только заголовки
+    X-Goog-Resource-State может быть sync (первое уведомление при подписке, игнорируем) или change (реальное изменение)
+    2. Webhook отвечает 200 немедленно — Drive ждёт не больше 10 секунд, иначе считает доставку неудачной
+    3. ARQ job process_drive_changes идёт в changes.list с pageToken из Redis, обрабатывает каждое изменение
+    """
+
+
+async def process_drive_changes(ctx) -> None:
+    """
+    Забирает изменения из Drive API начиная с сохранённого pageToken,
+    обрабатывает каждое: ingest или delete.
+    """
+    from rag.drive_client import list_changes
+    from rag.drive_ingestion import ingest_drive_file, delete_drive_file
+    from config import DRIVE_FOLDER_CATEGORY
+
+    redis = ctx["redis"]
+    page_token = await redis.get("drive:page_token")
+
+    if not page_token:
+        logger.warning("[process_drive_changes] нет pageToken в Redis, пропускаем")
+        return
+
+    changes, new_token = await list_changes(page_token)
+    logger.info(f"[process_drive_changes] {len(changes)} изменений")
+
+    for change in changes:
+        file_info = change.get("file")
+        file_id = change.get("fileId")
+
+        # Файл удалён или перемещён в корзину
+        if change.get("removed") or (file_info and file_info.get("trashed")):
+            await delete_drive_file(file_id)
+            continue
+
+        if not file_info:
+            continue
+
+        # Определяем категорию по папке-родителю
+        parents = file_info.get("parents", [])
+        category = None
+        for parent_id in parents:
+            if parent_id in DRIVE_FOLDER_CATEGORY:
+                category = DRIVE_FOLDER_CATEGORY[parent_id]
+                break
+
+        if not category:
+            logger.info(f"[process_drive_changes] файл {file_id} не в отслеживаемой папке, пропускаем")
+            continue
+
+        await ingest_drive_file(
+            file_id=file_id,
+            filename=file_info["name"],
+            mime_type=file_info["mimeType"],
+            category=category,
+            web_view_link=file_info.get("webViewLink"),
+        )
+
+    await redis.set("drive:page_token", new_token)
+
+async def renew_drive_watch(ctx) -> None:
+    """
+    Обновляет Watch подписки которые истекают в ближайшие 24 часа.
+    Запускается ARQ каждые 6 дней.
+    """
+    import uuid
+    from datetime import datetime, timezone
+    from rag.drive_client import watch_folder, stop_watch
+    from db import get_expiring_watch_channels, upsert_watch_channel
+    from config import settings
+
+    channels = await get_expiring_watch_channels()
+    logger.info(f"[renew_drive_watch] каналов к обновлению: {len(channels)}")
+
+    for ch in channels:
+        try:
+            await stop_watch(ch["channel_id"], ch["resource_id"])
+        except Exception as e:
+            logger.warning(f"[renew_drive_watch] stop_watch failed: {e}, продолжаем")
+
+        webhook_url = f"https://{settings.render_app_url}/drive/webhook?token={settings.google_webhook_secret}"
+        new_channel_id = str(uuid.uuid4())
+
+        response = await watch_folder(ch["folder_id"], webhook_url, new_channel_id)
+
+        expires_at = datetime.fromtimestamp(
+            int(response["expiration"]) / 1000,
+            tz=timezone.utc,
+        )
+        await upsert_watch_channel(
+            folder_id=ch["folder_id"],
+            category=ch["category"],
+            channel_id=new_channel_id,
+            resource_id=response["resourceId"],
+            expires_at=expires_at,
+        )
+        logger.info(f"[renew_drive_watch] обновлён канал для {ch['category']}, истекает {expires_at}")

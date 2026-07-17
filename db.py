@@ -1,6 +1,7 @@
 # db.py
 import asyncpg
 from config import settings
+from datetime import datetime
 
 pool: asyncpg.Pool | None = None
 
@@ -120,6 +121,41 @@ async def resolve_escalation(conversation_id: int) -> None:
             WHERE conversation_id = $1 AND status = 'active'
             """,
             conversation_id,
+        )
+
+async def get_active_watch_channels() -> list[asyncpg.Record]:
+    async with pool.acquire() as conn:
+        return await conn.fetch(
+            "SELECT * FROM drive_watch_channels WHERE expires_at > now()"
+        )
+
+async def upsert_watch_channel(
+    folder_id: str,
+    category: str,
+    channel_id: str,
+    resource_id: str,
+    expires_at: datetime,
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO drive_watch_channels
+                (folder_id, category, channel_id, resource_id, expires_at)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (folder_id) DO UPDATE SET
+                channel_id = EXCLUDED.channel_id,
+                resource_id = EXCLUDED.resource_id,
+                expires_at = EXCLUDED.expires_at,
+                created_at = now()
+            """,
+            folder_id, category, channel_id, resource_id, expires_at,
+        )
+
+async def get_expiring_watch_channels() -> list[asyncpg.Record]:
+    """Каналы которые истекают в ближайшие 24 часа."""
+    async with pool.acquire() as conn:
+        return await conn.fetch(
+            "SELECT * FROM drive_watch_channels WHERE expires_at < now() + interval '24 hours'"
         )
 
 async def close_pool() -> None:

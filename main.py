@@ -3,12 +3,13 @@ import time
 import hmac
 import httpx
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from arq import create_pool
 from arq.connections import RedisSettings
 from redis.asyncio import Redis as AIORedis
+import logging
 
-from config import settings
+from config import settings, OPERATOR_CHAT_IDS, OPERATOR_DEFAULT_CHAT_ID
 from telegram.telegram_models import TelegramUpdate
 from telegram.telegram_client import (
     send_message,
@@ -35,7 +36,6 @@ from db import (
 import db
 from rag.retrieval import retrieve, intent_to_category
 from rag.rag_answer import rag_answer
-from config import OPERATOR_CHAT_IDS, OPERATOR_DEFAULT_CHAT_ID
 from core.redis_session import (
     set_operator_session,
     get_conversation_by_operator,
@@ -44,6 +44,9 @@ from core.redis_session import (
     clear_operator_session,
 )
 from telegram.telegram_client import send_message_with_inline_button
+
+logger = logging.getLogger(__name__)
+
 ESCALATION_INTENTS = {
     "техподдержка",
     "жалоба_по доставке",
@@ -83,6 +86,10 @@ async def lifespan(app: FastAPI):
         redis_client = AIORedis.from_url(settings.redis_url, decode_responses=True)
         print("[lifespan] Redis клиент создан")
 
+        print("[lifespan] Инициализирую Drive Watch...")
+        await _init_drive_watch()
+        print("[lifespan] Drive Watch готов")
+
     except Exception as e:
         print(f"[lifespan] ОШИБКА при инициализации: {e}")
         import traceback
@@ -110,6 +117,23 @@ async def health():
 async def health_head():
     return {"status": "ok"}
 
+@app.post("/drive/webhook")
+async def drive_webhook(
+    request: Request,
+    token: str | None = None,
+):
+    # Верификация секрета
+    if not hmac.compare_digest(token or "", settings.google_webhook_secret):
+        raise HTTPException(status_code=403, detail="Invalid token")
+
+    # sync — первое уведомление при создании подписки, игнорируем
+    resource_state = request.headers.get("X-Goog-Resource-State", "")
+    if resource_state == "sync":
+        return {"ok": True}
+
+    # Реальное изменение — кидаем в ARQ и сразу отвечаем 200
+    await arq_pool.enqueue_job("process_drive_changes")
+    return {"ok": True}
 
 @app.post("/conversation/{conversation_id}/resolve")
 async def resolve_conversation(conversation_id: int):
@@ -311,7 +335,6 @@ async def webhook(
                 _defer_by=e.retry_after,
             )
             stub_reply = "Сейчас все операторы заняты, отвечу через пару минут."
-            await log_message(conversation_id, "assistant", stub_reply)
             try:
                 await send_message(chat_id, stub_reply)
             except httpx.HTTPStatusError as send_err:
@@ -332,3 +355,79 @@ async def webhook(
                 print(f"[webhook] send_message failed: {send_err}")
 
     return {"ok": True}
+
+@app.delete("/drive/categories/{category}")
+async def delete_drive_category(category: str, confirm: bool = False):
+    """
+    Удаляет все документы и чанки категории из БД.
+    Без confirm=true — только показывает что будет удалено.
+    """
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, document_id, filename FROM documents WHERE category = $1",
+            category,
+        )
+
+    if not rows:
+        return {"category": category, "documents": 0, "message": "Ничего не найдено"}
+
+    if not confirm:
+        return {
+            "category": category,
+            "documents": len(rows),
+            "files": [r["filename"] for r in rows],
+            "message": "Передайте confirm=true для удаления",
+        }
+
+    async with db.pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM documents WHERE category = $1",
+            category,
+        )
+
+    return {"category": category, "deleted": len(rows), "ok": True}
+
+async def _init_drive_watch() -> None:
+    """
+    Вызывается при старте FastAPI.
+    Проверяет pageToken и Watch подписки — создаёт если нет или истекли.
+    """
+    import uuid
+    from datetime import datetime, timezone
+    from rag.drive_client import get_start_page_token, watch_folder
+    from db import get_active_watch_channels, upsert_watch_channel
+    from config import DRIVE_FOLDER_MAP, settings
+
+    # pageToken
+    existing_token = await redis_client.get("drive:page_token")
+    if not existing_token:
+        token = await get_start_page_token()
+        await redis_client.set("drive:page_token", token)
+        logger.info(f"[drive_init] pageToken установлен: {token}")
+    else:
+        logger.info(f"[drive_init] pageToken уже есть в Redis")
+    # Watch подписки
+    active = await get_active_watch_channels()
+    active_folders = {ch["folder_id"] for ch in active}
+
+    webhook_url = f"https://{settings.render_app_url}/drive/webhook?token={settings.google_webhook_secret}"
+
+    for category, folder_id in DRIVE_FOLDER_MAP.items():
+        if folder_id in active_folders:
+            logger.info(f"[drive_init] подписка для {category} уже активна")
+            continue
+
+        channel_id = str(uuid.uuid4())
+        response = await watch_folder(folder_id, webhook_url, channel_id)
+        expires_at = datetime.fromtimestamp(
+            int(response["expiration"]) / 1000,
+            tz=timezone.utc,
+        )
+        await upsert_watch_channel(
+            folder_id=folder_id,
+            category=category,
+            channel_id=channel_id,
+            resource_id=response["resourceId"],
+            expires_at=expires_at,
+        )
+        logger.info(f"[drive_init] подписка создана для {category}")

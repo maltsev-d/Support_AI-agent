@@ -129,10 +129,7 @@ async def rag_answer(
     try:
         response = await _groq.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": query},
-            ],
+            messages=messages,
             max_tokens=300,
             temperature=0.2,
         )

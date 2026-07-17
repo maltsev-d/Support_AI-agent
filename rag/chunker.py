@@ -27,7 +27,7 @@ from dataclasses import dataclass
 #   _enc = tiktoken.get_encoding("cl100k_base")
 #   def _count_tokens(text): return len(_enc.encode(text))
 def _count_tokens(text: str) -> int:
-    return max(1, len(text) // 2)
+    return max(1, len(text) // 3)
 
 
 CHUNK_SIZE = 400    # целевой размер чанка в токенах (~800 символов кириллицы)

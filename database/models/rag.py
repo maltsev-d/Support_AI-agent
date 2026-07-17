@@ -136,7 +136,7 @@ class Document(Base):
         nullable=False,
     )
 
-    source: Mapped[str | None] = mapped_column(
+    external_url: Mapped[str | None] = mapped_column(
         Text,
         nullable=False,
     )
@@ -258,4 +258,22 @@ class KBChunk(Base):
             postgresql_using="hnsw",
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
+    )
+
+# ==========================================================
+# DriveWatchChannel
+# ==========================================================
+
+class DriveWatchChannel(Base):
+    __tablename__ = "drive_watch_channels"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    folder_id: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(Text, nullable=False)
+    channel_id: Mapped[str] = mapped_column(Text, nullable=False)
+    resource_id: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (
+        UniqueConstraint("folder_id", name="uq_drive_watch_folder_id"),
     )

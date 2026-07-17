@@ -12,8 +12,11 @@ class Settings:
     telegram_webhook_secret: str
     database_url: str
     redis_url: str
-    cohere_api_key: str          # ← новое
+    cohere_api_key: str
     n8n_escalation_webhook: str
+    google_credentials: str
+    google_webhook_secret: str
+    render_app_url: str
 
     def __post_init__(self):
         missing = [k for k, v in self.__dict__.items() if not v]
@@ -29,6 +32,11 @@ def _load() -> Settings:
         redis_url=os.getenv("REDIS_URL", ""),
         cohere_api_key=os.getenv("COHERE_API_KEY", ""),   # ← новое
         n8n_escalation_webhook = os.getenv("N8N_ESCALATION_WEBHOOK", ""),
+        google_credentials=os.getenv("GOOGLE_CREDENTIALS", ""),
+        google_webhook_secret=os.getenv("DRIVE_WEBHOOK_SECRET", ""),
+        render_app_url=os.getenv("RENDER_APP_URL", ""),
+
+
     )
 
 settings = _load()
@@ -41,3 +49,12 @@ OPERATOR_CHAT_IDS: dict[str, int] = {
     "support":        5605852182,
 }
 OPERATOR_DEFAULT_CHAT_ID: int = 5605852182  # complaint, manual, llm_unavailable
+
+DRIVE_FOLDER_MAP: dict[str, str] = {
+    "company":  "1zUN-h0h3P61Xn0lVLtmBERMEOKglZ0fU",
+    "products": "1imceI6V2ZTluHetZESzeVlTFNVtLtkIA",
+    "delivery": "1I5Y_pDk7SIZmnVDD_D8hc83N_aR95k3h",
+    "payments": "1vcPRGbYEYD8C3yurzekJ4vtaEXknY5Qt",
+}
+# Обратный маппинг — folder_id → category, нужен при обработке Watch уведомлений
+DRIVE_FOLDER_CATEGORY: dict[str, str] = {v: k for k, v in DRIVE_FOLDER_MAP.items()}

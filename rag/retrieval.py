@@ -104,25 +104,6 @@ async def retrieve(
             query_vector, category, threshold, top_k,
         )
 
-    async with db.pool.acquire() as conn:
-        # Сначала смотрим что реально происходит
-        debug_rows = await conn.fetch(
-            """
-            SELECT d.filename,
-                   d.category,
-                   c.embedding <=> $1::vector AS distance
-            FROM kb_chunks c
-                JOIN documents d
-            ON d.id = c.document_id
-            ORDER BY distance
-                LIMIT 10
-            """,
-            query_vector,
-        )
-        print("[DEBUG] Все distances без фильтров:")
-        for r in debug_rows:
-            print(f"  {r['filename']} | {r['category']} | distance={r['distance']:.4f}")
-
     # ШАГ 3: Форматируем результат
     if not rows:
         print(f"[retrieve] ✗ Ничего не найдено (все чанки дальше порога {threshold})")
