@@ -278,11 +278,13 @@ async def webhook(
     user_message_logged = False
     message_sent = False
 
-    # Голосовое сообщение
     if update.message.voice:
+        print(f"[webhook] voice от chat_id={chat_id}")
         try:
             audio_bytes = await download_voice(update.message.voice.file_id)
+            print(f"[webhook] voice скачан, байт={len(audio_bytes)}")
             text = await transcribe_voice(audio_bytes)
+            print(f"[webhook] транскрипция: {text!r}")
             if not text:
                 await send_message(chat_id, WHISPER_UNAVAILABLE_REPLY)
                 return {"ok": True}
