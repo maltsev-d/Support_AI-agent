@@ -208,7 +208,10 @@ async def webhook(
 
         return {"ok": True}
 
-    if not update.message or not update.message.text:
+    if not update.message:
+        return {"ok": True}
+
+    if not update.message.text and not update.message.voice:
         return {"ok": True}
 
     text = update.message.text
