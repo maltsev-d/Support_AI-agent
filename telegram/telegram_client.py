@@ -76,3 +76,21 @@ async def remove_reply_keyboard(chat_id: int, text: str) -> None:
             },
         )
         resp.raise_for_status()
+
+async def download_voice(file_id: str) -> bytes:
+    """Скачивает голосовое сообщение по file_id."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Шаг 1: получаем file_path
+        resp = await client.get(
+            f"{BASE}/getFile",
+            params={"file_id": file_id},
+        )
+        resp.raise_for_status()
+        file_path = resp.json()["result"]["file_path"]
+
+        # Шаг 2: скачиваем файл
+        resp = await client.get(
+            f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{file_path}"
+        )
+        resp.raise_for_status()
+        return resp.content

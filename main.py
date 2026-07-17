@@ -44,6 +44,8 @@ from core.redis_session import (
     clear_operator_session,
 )
 from telegram.telegram_client import send_message_with_inline_button
+from telegram.telegram_client import download_voice
+from core.whisper import transcribe_voice, WHISPER_UNAVAILABLE_REPLY
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +273,18 @@ async def webhook(
 
     user_message_logged = False
     message_sent = False
+
+    # Голосовое сообщение
+    if update.message.voice:
+        try:
+            audio_bytes = await download_voice(update.message.voice.file_id)
+            text = await transcribe_voice(audio_bytes)
+            if not text:
+                await send_message(chat_id, WHISPER_UNAVAILABLE_REPLY)
+                return {"ok": True}
+        except GroqRateLimitExhausted:
+            await send_message(chat_id, WHISPER_UNAVAILABLE_REPLY)
+            return {"ok": True}
 
     try:
         intent = await classify_intent(text)
