@@ -109,6 +109,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+@app.delete("/admin/drive-token")
+async def reset_drive_token():
+    await redis_client.delete("drive:page_token")
+    return {"ok": True}
 
 @app.get("/health")
 async def health():
