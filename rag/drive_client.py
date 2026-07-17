@@ -120,6 +120,7 @@ async def get_start_page_token() -> str:
     def _get():
         return _service.changes().getStartPageToken().execute()["startPageToken"]
     return await asyncio.to_thread(_get)
+    return str(result)  # ← добавить str()
 
 
 async def list_changes(page_token: str) -> tuple[list[dict], str]:
