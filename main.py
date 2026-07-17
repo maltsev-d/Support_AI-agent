@@ -164,6 +164,8 @@ async def webhook(
     ):
         raise HTTPException(status_code=403, detail="Invalid secret token")
 
+    print(f"[webhook] raw message fields: {update.message.model_dump()}")
+
     # ── ВЕТКА 1: callback_query ──
     if update.callback_query:
         cq = update.callback_query
