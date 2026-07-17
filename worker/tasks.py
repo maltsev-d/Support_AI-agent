@@ -215,7 +215,9 @@ async def renew_drive_watch(ctx) -> None:
         except Exception as e:
             logger.warning(f"[renew_drive_watch] stop_watch failed: {e}, продолжаем")
 
-        webhook_url = f"https://{settings.render_app_url}/drive/webhook?token={settings.google_webhook_secret}"
+        logger.info(f"[drive_init_1] render_app_url='{settings.render_app_url}'")
+        webhook_url = f"https://{settings.render_app_url}drive/webhook?token={settings.google_webhook_secret}"
+        logger.info(f"[drive_init_1] webhook_url='{webhook_url}'")
         new_channel_id = str(uuid.uuid4())
 
         response = await watch_folder(ch["folder_id"], webhook_url, new_channel_id)
