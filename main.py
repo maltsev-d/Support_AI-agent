@@ -214,7 +214,7 @@ async def webhook(
     if not update.message.text and not update.message.voice:
         return {"ok": True}
 
-    text = update.message.text
+    text = update.message.text or ""
     chat_id = update.message.chat.id
 
     print(f"[webhook] chat_id={chat_id} text={text!r}")
