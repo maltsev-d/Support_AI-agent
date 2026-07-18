@@ -153,6 +153,8 @@ async def process_drive_changes(ctx) -> None:
 
     redis = ctx["redis"]
     page_token = await redis.get("drive:page_token")
+    if isinstance(page_token, bytes):
+        page_token = page_token.decode()
 
     if not page_token:
         logger.warning("[process_drive_changes] нет pageToken в Redis, пропускаем")

@@ -124,6 +124,9 @@ async def get_start_page_token() -> str:
 
 
 async def list_changes(page_token: str) -> tuple[list[dict], str]:
+    if isinstance(page_token, bytes):
+        page_token = page_token.decode()
+    ...
     """
     Возвращает (список изменений, новый pageToken).
     Изменения — все файлы на Drive после page_token.
