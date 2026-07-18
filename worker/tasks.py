@@ -10,6 +10,7 @@ from core.escalation import create_escalation
 from core.groq_errors import GroqRateLimitExhausted
 from rag.retrieval import retrieve, intent_to_category
 from rag.rag_answer import rag_answer
+from rag.reranker import rerank
 import db
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,8 @@ async def retry_llm_pipeline(
         elif intent in RAG_INTENTS:
             category = intent_to_category(intent)
             chunks = await retrieve(query=text, category=category)
-            reply = await rag_answer(query=text, chunks=chunks, history=history)  # ← пробросили
+            chunks = await rerank(query=text, chunks=chunks)
+            reply = await rag_answer(query=text, chunks=chunks, history=history)
 
         elif intent == "спам":
             reply = "Если у вас есть конкретный вопрос, сформулируйте его пожалуйста."

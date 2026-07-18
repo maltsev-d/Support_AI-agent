@@ -36,6 +36,7 @@ from db import (
 import db
 from rag.retrieval import retrieve, intent_to_category
 from rag.rag_answer import rag_answer
+from rag.reranker import rerank
 from core.redis_session import (
     set_operator_session,
     get_conversation_by_operator,
@@ -310,6 +311,7 @@ async def webhook(
         elif intent in RAG_INTENTS:
             category = intent_to_category(intent)
             chunks = await retrieve(query=text, category=category)
+            chunks = await rerank(query=text, chunks=chunks)
             reply = await rag_answer(query=text, chunks=chunks, history=history)
 
             # убрать `or True` после тестирования

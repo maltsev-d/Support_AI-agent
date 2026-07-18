@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 # Значение эмпирическое — уточняется по реальным запросам после деплоя.
 SIMILARITY_THRESHOLD = 0.6
 
-TOP_K = 3  # сколько чанков максимум кидаем в промпт LLM
+TOP_K = 10  # кандидаты для reranker; reranker сам отберёт top-3 для Groq
 
 
 @dataclass
