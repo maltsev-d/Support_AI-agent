@@ -1,7 +1,7 @@
 # worker/settings.py
 from arq.connections import RedisSettings
 from config import settings
-from worker.tasks import retry_llm_pipeline, mark_resolved, process_drive_changes
+from worker.tasks import retry_llm_pipeline, mark_resolved, process_drive_changes, renew_drive_watch
 import db
 
 
@@ -20,7 +20,7 @@ async def on_shutdown(ctx):
 
 
 class WorkerSettings:
-    functions = [retry_llm_pipeline, mark_resolved, process_drive_changes]
+    functions = [retry_llm_pipeline, mark_resolved, process_drive_changes, renew_drive_watch ]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     on_startup = on_startup
     on_shutdown = on_shutdown

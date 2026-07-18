@@ -150,6 +150,10 @@ async def process_drive_changes(ctx) -> None:
     from rag.drive_client import list_changes
     from rag.drive_ingestion import ingest_drive_file, delete_drive_file
     from config import DRIVE_FOLDER_CATEGORY
+    import db
+    if db.pool is None:
+        logger.error("[process_drive_changes] db.pool is None — on_startup не отработал?")
+        return
 
     redis = ctx["redis"]
     page_token = await redis.get("drive:page_token")

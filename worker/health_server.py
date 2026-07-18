@@ -38,6 +38,8 @@ async def main():
     arq_worker = Worker(
         functions=WorkerSettings.functions,
         redis_settings=WorkerSettings.redis_settings,
+        on_startup=WorkerSettings.on_startup,
+        on_shutdown=WorkerSettings.on_shutdown,
         handle_signals=False,
     )
 
