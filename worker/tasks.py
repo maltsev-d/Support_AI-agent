@@ -196,41 +196,45 @@ async def process_drive_changes(ctx) -> None:
     await redis.set("drive:page_token", new_token)
 
 async def renew_drive_watch(ctx) -> None:
-    """
-    Обновляет Watch подписки которые истекают в ближайшие 24 часа.
-    Запускается ARQ каждые 6 дней.
-    """
     import uuid
-    from datetime import datetime, timezone
-    from rag.drive_client import watch_folder, stop_watch
-    from db import get_expiring_watch_channels, upsert_watch_channel
+    from datetime import datetime, timezone, timedelta
+    from rag.drive_client import watch_changes, stop_watch
+    from db import get_changes_watch, upsert_changes_watch
     from config import settings
 
-    channels = await get_expiring_watch_channels()
-    logger.info(f"[renew_drive_watch] каналов к обновлению: {len(channels)}")
+    existing = await get_changes_watch()
+    if not existing:
+        logger.warning("[renew_drive_watch] нет активной подписки")
+        return
 
-    for ch in channels:
-        try:
-            await stop_watch(ch["channel_id"], ch["resource_id"])
-        except Exception as e:
-            logger.warning(f"[renew_drive_watch] stop_watch failed: {e}, продолжаем")
+    # Обновляем если истекает в ближайшие 24 часа
+    if existing["expires_at"] > datetime.now(tz=timezone.utc) + timedelta(hours=24):
+        logger.info("[renew_drive_watch] подписка ещё свежая, пропускаем")
+        return
 
-        logger.info(f"[drive_init_1] render_app_url='{settings.render_app_url}'")
-        webhook_url = f"https://{settings.render_app_url}drive/webhook?token={settings.google_webhook_secret}"
-        logger.info(f"[drive_init_1] webhook_url='{webhook_url}'")
-        new_channel_id = str(uuid.uuid4())
+    try:
+        await stop_watch(existing["channel_id"], existing["resource_id"])
+    except Exception as e:
+        logger.warning(f"[renew_drive_watch] stop_watch failed: {e}")
 
-        response = await watch_folder(ch["folder_id"], webhook_url, new_channel_id)
+    redis = ctx["redis"]
+    page_token = await redis.get("drive:page_token")
+    if not page_token:
+        from rag.drive_client import get_start_page_token
+        page_token = await get_start_page_token()
+        await redis.set("drive:page_token", str(page_token))
 
-        expires_at = datetime.fromtimestamp(
-            int(response["expiration"]) / 1000,
-            tz=timezone.utc,
-        )
-        await upsert_watch_channel(
-            folder_id=ch["folder_id"],
-            category=ch["category"],
-            channel_id=new_channel_id,
-            resource_id=response["resourceId"],
-            expires_at=expires_at,
-        )
-        logger.info(f"[renew_drive_watch] обновлён канал для {ch['category']}, истекает {expires_at}")
+    webhook_url = f"https://{settings.render_app_url}/drive/webhook?token={settings.google_webhook_secret}"
+    channel_id = str(uuid.uuid4())
+
+    response = await watch_changes(webhook_url, channel_id, page_token)
+    expires_at = datetime.fromtimestamp(
+        int(response["expiration"]) / 1000,
+        tz=timezone.utc,
+    )
+    await upsert_changes_watch(
+        channel_id=channel_id,
+        resource_id=response["resourceId"],
+        expires_at=expires_at,
+    )
+    logger.info(f"[renew_drive_watch] подписка обновлена, истекает {expires_at}")

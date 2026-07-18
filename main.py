@@ -413,48 +413,37 @@ async def delete_drive_category(category: str, confirm: bool = False):
     return {"category": category, "deleted": len(rows), "ok": True}
 
 async def _init_drive_watch() -> None:
-    """
-    Вызывается при старте FastAPI.
-    Проверяет pageToken и Watch подписки — создаёт если нет или истекли.
-    """
     import uuid
     from datetime import datetime, timezone
-    from rag.drive_client import get_start_page_token, watch_folder
-    from db import get_active_watch_channels, upsert_watch_channel
-    from config import DRIVE_FOLDER_MAP, settings
+    from rag.drive_client import get_start_page_token, watch_changes
+    from db import get_changes_watch, upsert_changes_watch
 
     # pageToken
-    existing_token = await redis_client.get("drive:page_token")
-    if not existing_token:
-        token = await get_start_page_token()
-        await redis_client.set("drive:page_token", token)
-        logger.info(f"[drive_init] pageToken установлен: {token}")
+    page_token = await redis_client.get("drive:page_token")
+    if not page_token:
+        page_token = await get_start_page_token()
+        await redis_client.set("drive:page_token", page_token)
+        logger.info(f"[drive_init] pageToken установлен: {page_token}")
     else:
-        logger.info(f"[drive_init] pageToken уже есть в Redis")
-    # Watch подписки
-    active = await get_active_watch_channels()
-    active_folders = {ch["folder_id"] for ch in active}
+        logger.info(f"[drive_init] pageToken уже есть: {page_token}")
 
-    logger.info(f"[drive_init] render_app_url='{settings.render_app_url}'")
-    webhook_url = f"https://{settings.render_app_url}drive/webhook?token={settings.google_webhook_secret}"
-    logger.info(f"[drive_init] webhook_url='{webhook_url}'")
+    # Watch подписка
+    existing = await get_changes_watch()
+    if existing:
+        logger.info(f"[drive_init] Watch подписка активна до {existing['expires_at']}")
+        return
 
-    for category, folder_id in DRIVE_FOLDER_MAP.items():
-        if folder_id in active_folders:
-            logger.info(f"[drive_init] подписка для {category} уже активна")
-            continue
+    webhook_url = f"https://{settings.render_app_url}/drive/webhook?token={settings.google_webhook_secret}"
+    channel_id = str(uuid.uuid4())
 
-        channel_id = str(uuid.uuid4())
-        response = await watch_folder(folder_id, webhook_url, channel_id)
-        expires_at = datetime.fromtimestamp(
-            int(response["expiration"]) / 1000,
-            tz=timezone.utc,
-        )
-        await upsert_watch_channel(
-            folder_id=folder_id,
-            category=category,
-            channel_id=channel_id,
-            resource_id=response["resourceId"],
-            expires_at=expires_at,
-        )
-        logger.info(f"[drive_init] подписка создана для {category}")
+    response = await watch_changes(webhook_url, channel_id, page_token)
+    expires_at = datetime.fromtimestamp(
+        int(response["expiration"]) / 1000,
+        tz=timezone.utc,
+    )
+    await upsert_changes_watch(
+        channel_id=channel_id,
+        resource_id=response["resourceId"],
+        expires_at=expires_at,
+    )
+    logger.info(f"[drive_init] Watch подписка создана, истекает {expires_at}")

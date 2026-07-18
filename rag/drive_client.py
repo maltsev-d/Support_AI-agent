@@ -141,13 +141,13 @@ async def list_changes(page_token: str) -> tuple[list[dict], str]:
 
     return await asyncio.to_thread(_list)
 
-
+"""
 async def watch_folder(folder_id: str, webhook_url: str, channel_id: str) -> dict:
-    """
-    Подписывается на изменения папки.
-    channel_id — уникальный ID подписки (uuid), нужен для обновления.
-    Возвращает dict с expiration (unix ms) и resourceId для отписки.
-    """
+    
+    # Подписывается на изменения папки.
+    # channel_id — уникальный ID подписки (uuid), нужен для обновления.
+    # Возвращает dict с expiration (unix ms) и resourceId для отписки.
+    
     def _watch():
         body = {
             "id": channel_id,
@@ -160,7 +160,24 @@ async def watch_folder(folder_id: str, webhook_url: str, channel_id: str) -> dic
         ).execute()
 
     return await asyncio.to_thread(_watch)
+"""
+async def watch_changes(webhook_url: str, channel_id: str, page_token: str) -> dict:
+    """
+    Подписка на все изменения Drive.
+    Одна подписка вместо per-папочных — ловит изменения файлов внутри папок.
+    """
+    def _watch():
+        body = {
+            "id": channel_id,
+            "type": "web_hook",
+            "address": webhook_url,
+        }
+        return _service.changes().watch(
+            pageToken=page_token,
+            body=body,
+        ).execute()
 
+    return await asyncio.to_thread(_watch)
 
 async def stop_watch(channel_id: str, resource_id: str) -> None:
     """Отменяет подписку Watch."""

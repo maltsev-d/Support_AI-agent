@@ -129,33 +129,27 @@ async def get_active_watch_channels() -> list[asyncpg.Record]:
             "SELECT * FROM drive_watch_channels WHERE expires_at > now()"
         )
 
-async def upsert_watch_channel(
-    folder_id: str,
-    category: str,
+async def upsert_changes_watch(
     channel_id: str,
     resource_id: str,
     expires_at: datetime,
 ) -> None:
     async with pool.acquire() as conn:
+        # Удаляем старые, вставляем новую
+        await conn.execute("DELETE FROM drive_watch_channels")
         await conn.execute(
             """
             INSERT INTO drive_watch_channels
                 (folder_id, category, channel_id, resource_id, expires_at)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (folder_id) DO UPDATE SET
-                channel_id = EXCLUDED.channel_id,
-                resource_id = EXCLUDED.resource_id,
-                expires_at = EXCLUDED.expires_at,
-                created_at = now()
+            VALUES ('all', 'all', $1, $2, $3)
             """,
-            folder_id, category, channel_id, resource_id, expires_at,
+            channel_id, resource_id, expires_at,
         )
 
-async def get_expiring_watch_channels() -> list[asyncpg.Record]:
-    """Каналы которые истекают в ближайшие 24 часа."""
+async def get_changes_watch() -> asyncpg.Record | None:
     async with pool.acquire() as conn:
-        return await conn.fetch(
-            "SELECT * FROM drive_watch_channels WHERE expires_at < now() + interval '24 hours'"
+        return await conn.fetchrow(
+            "SELECT * FROM drive_watch_channels LIMIT 1"
         )
 
 async def close_pool() -> None:
